@@ -61,3 +61,27 @@ def get_note(note_id: int, db: Session = Depends(get_db)):
     if note is None: # error handling
         raise HTTPException(status_code=404, detail="Note not found")
     return note
+
+# update note title and/or content by id
+@app.put("/notes/{note_id}", response_model=NoteOut)
+def update_note(note_id: int, note: NoteCreate, db: Session = Depends(get_db)):
+    db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
+    if db_note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    db_note.title = note.title
+    db_note.content = note.content
+    db.commit()
+    db.refresh(db_note)
+    return db_note
+
+# delete a note by id
+@app.delete("/notes/{note_id}")
+def delete_note(note_id: int, db: Session = Depends(get_db)):
+    db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
+    if db_note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    
+    db.delete(db_note)
+    db.commit()
+    return {"deleted": True, "id": note_id}
