@@ -12,7 +12,7 @@ JWT_SECRET = "dev-only-change-me" # secret key to sign tokens
 JWT_ALG = "HS256" # the alg used to sign the token (math formula)
 JWT_EXPIRES_SECONDS = 60 * 60 # 1 hour token expiration
 
-pwd_context = CryptContext(schemes=["bycrypt"], deprecated="auto") # handles hasing and verification
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") # handles hashing and verification
 bearer_scheme = HTTPBearer() # validate tokens, password + hash --> verify 
 
 def hash_password(password: str) -> str:

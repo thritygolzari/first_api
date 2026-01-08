@@ -2,9 +2,13 @@ from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+
 from database import SessionLocal, engine
 from models import NoteDB
 from database import Base
+
+from auth import hash_password, verify_password, create_access_token, get_current_user_id
+from models import UserDB
 
 app = FastAPI()
 
@@ -23,6 +27,19 @@ class NoteOut(BaseModel): # for returning a note
 
     class Config:
         from_attributes = True # for SQLAlchemy instance -> pydantic conversion
+
+# schemas for auth
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 # Dependency: get a DB session per request
 def get_db():
@@ -43,7 +60,8 @@ def hello(name: str = "world"):
 
 # Notes endpoints
 @app.post("/notes", response_model=NoteOut) # creates a note, format using NoteOut
-def create_note(note: NoteCreate, db: Session = Depends(get_db)): # fastapi gives a db session for request
+def create_note(note: NoteCreate, db: Session = Depends(get_db),
+               user_id: int = Depends(get_current_user_id),): # fastapi gives a db session for request
     new_note = NoteDB(title=note.title, content=note.content) # create SQLAlchemy object
     db.add(new_note)
     db.commit()
@@ -51,12 +69,14 @@ def create_note(note: NoteCreate, db: Session = Depends(get_db)): # fastapi give
     return new_note # return SQLAlchemy object, FastAPI + Pydantic convert it to JSON with NoteOut
 
 @app.get("/notes", response_model=list[NoteOut])
-def list_notes(db: Session = Depends(get_db)):
+def list_notes(db: Session = Depends(get_db),
+               user_id: int = Depends(get_current_user_id),):
     return db.query(NoteDB).all() # returns all notes from db
 
 # find specific note
 @app.get("/notes/{note_id}", response_model=NoteOut) 
-def get_note(note_id: int, db: Session = Depends(get_db)):
+def get_note(note_id: int, db: Session = Depends(get_db),
+               user_id: int = Depends(get_current_user_id),):
     note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if note is None: # error handling
         raise HTTPException(status_code=404, detail="Note not found")
@@ -64,7 +84,8 @@ def get_note(note_id: int, db: Session = Depends(get_db)):
 
 # update note title and/or content by id
 @app.put("/notes/{note_id}", response_model=NoteOut)
-def update_note(note_id: int, note: NoteCreate, db: Session = Depends(get_db)):
+def update_note(note_id: int, note: NoteCreate, db: Session = Depends(get_db),
+               user_id: int = Depends(get_current_user_id),):
     db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if db_note is None:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -77,7 +98,8 @@ def update_note(note_id: int, note: NoteCreate, db: Session = Depends(get_db)):
 
 # delete a note by id
 @app.delete("/notes/{note_id}")
-def delete_note(note_id: int, db: Session = Depends(get_db)):
+def delete_note(note_id: int, db: Session = Depends(get_db),
+               user_id: int = Depends(get_current_user_id),):
     db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
     if db_note is None:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -85,3 +107,33 @@ def delete_note(note_id: int, db: Session = Depends(get_db)):
     db.delete(db_note)
     db.commit()
     return {"deleted": True, "id": note_id}
+
+# auth endpoints
+
+# registration endpoint
+@app.post("/auth/register")
+def register(data: RegisterIn, db: Session = Depends(get_db)):
+    existing = db.query(UserDB).filter(UserDB.email == data.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user = UserDB(email=data.email, password_hash=hash_password(data.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    print("PW:", repr(data.password))
+    print("PW bytes:", len(data.password.encode("utf-8")))
+
+    return {"id": user.id, "email": user.email}
+
+# user login endpoint
+@app.post("/auth/login")
+def login(data: LoginIn, db: Session = Depends(get_db)):
+    user = db.query(UserDB).filter(UserDB.email == data.email).first()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # if account exists, create token
+    token = create_access_token(user.id)
+    return {"access_token": token, "token_type": "bearer"}
